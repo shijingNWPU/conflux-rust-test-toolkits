@@ -52,6 +52,10 @@ git fetch --all
 git checkout $repo/$branch
 git submodule update --init --recursive
 git submodule update --recursive
+cd tests/extra-test-toolkits
+git checkout perf-test
+cd ../..
+
 export RUSTFLAGS="-g" && cargo build --release #--features "deadlock_detection"
 ./dev-support/dep_pip3.sh
 cd tests/extra-test-toolkits/scripts
