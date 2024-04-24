@@ -9,7 +9,7 @@ elif [[ $# -eq 1 ]] && [[ "$1" == "--public" ]]; then
 else
     echo "Invalid argument. Pass no argument to get private ips or --public for public ips."
 fi
-
+  
 if [[ -f ips ]]; then
     mv ips ips_old
 fi
