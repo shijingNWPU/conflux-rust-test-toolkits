@@ -8,16 +8,16 @@ if [ $# -lt 3 ]; then
     exit 1
 elif [ $# -eq 4 ]; then
     image="$4"
-    type="m5.xlarge"
+    type="c6a.xlarge"
     public=""
 elif [[ -f slave_image ]]; then
     image=`cat slave_image`
-    type="m5.xlarge"
+    type="c6a.xlarge"
     public=""
 else
     # create master instances
     image="ami-0063b4d5b0ad81888" # experiment image
-    type="m5.4xlarge"
+    type="c6a.xlarge"
     public="--public"
 fi
 
