@@ -18,9 +18,22 @@ import time
 from scripts.stat_latency_map_reduce import Statistics
 import platform
 
+
+sys.path.append("/home/ubuntu/cfx-account")
+print(sys.path)
+from cfx_account.account import (
+    Account
+)
+from conflux_web3 import Web3
+from solcx import install_solc, compile_source
+
+ACCOUNT_NUM = 20
+TX_NUM_FOR_ACCOUNT = 50
+
 CONFIRMATION_THRESHOLD = 0.1**6 * 2**256
 
 def execute(cmd, retry, cmd_description):
+    print("excute:", cmd)
     while True:
         ret = os.system(cmd)
 
@@ -36,11 +49,15 @@ def execute(cmd, retry, cmd_description):
         time.sleep(1)
 
 def pssh(ips_file:str, remote_cmd:str, retry=3, cmd_description=""):
+    print("pscp")
     cmd = f'parallel-ssh -O "StrictHostKeyChecking no" -h {ips_file} -p 400 "{remote_cmd}" > /dev/null 2>&1'
+    print(cmd)
     execute(cmd, retry, cmd_description)
 
 def pscp(ips_file:str, local:str, remote:str, retry=3, cmd_description=""):
+    print("pscp")
     cmd = f'parallel-scp -O "StrictHostKeyChecking no" -h {ips_file} -p 400 {local} {remote} > /dev/null 2>&1'
+    print(cmd)
     execute(cmd, retry, cmd_description)
 
 def kill_remote_conflux(ips_file:str):
@@ -50,6 +67,10 @@ def kill_remote_conflux(ips_file:str):
 Setup and run conflux nodes on multiple vms with a few nodes on each vm.
 """
 class RemoteSimulate(ConfluxTestFramework):
+    def __init__(self):
+        super().__init__()
+        self.nonce_map = {} 
+
     def set_test_params(self):
         self.rpc_timewait = 600
         # Have to have a num_nodes due to assert in base class.
@@ -149,14 +170,31 @@ class RemoteSimulate(ConfluxTestFramework):
         # setup on remote nodes and start conflux
         self.log.info("setup conflux runtime environment and start conflux on remote nodes ...")
         cmd_kill_conflux = "killall -9 conflux || echo already killed"
-        cmd_cleanup = "rm -rf /tmp/conflux_test_*"
+        cmd_cleanup = "rm -rf /tmp/conflux_test_* /home/ubuntu/start_conflux.out"
         cmd_setup = "tar zxf conflux_conf.tgz -C /tmp"
         cmd_startup = "./remote_start_conflux.sh {} {} {} {} {}&> start_conflux.out".format(
             self.options.tmpdir, p2p_port(0), self.options.nodes_per_host,
             self.options.bandwidth, str(self.options.enable_flamegraph).lower()
         )
         cmd = "{}; {} && {} && {}".format(cmd_kill_conflux, cmd_cleanup, cmd_setup, cmd_startup)
+        print(cmd)
         pssh(self.options.ips_file, cmd, 3, "setup and run conflux on remote nodes")
+
+    def setup_network_not_first(self):
+        self.setup_remote_conflux()
+
+        # add remote nodes and start all
+        for i in range(len(self.nodes)):
+            self.log.info("Node[{}]: ip={}, p2p_port={}, rpc_port={}".format(
+                i, self.nodes[i].ip, self.nodes[i].port, self.nodes[i].rpcport))
+        self.log.info("Starting remote nodes ...")
+        self.start_nodes()
+        self.log.info("All nodes started, waiting to be connected")
+
+        connect_sample_nodes(self.nodes, self.log, sample=self.options.connect_peers, timeout=120)
+
+        self.wait_until_nodes_synced()
+
 
     def setup_network(self):
         self.setup_remote_conflux()
@@ -260,7 +298,228 @@ class RemoteSimulate(ConfluxTestFramework):
             self.log.info(self.confirm_info.progress())
             time.sleep(0.5)
 
+    def generate_curve_accounts(self, account_num):
+        account_list = []
+        for i in range(1, account_num + 1):
+            account = format(i, '064x')  # 将数字转换为十六进制字符串，总长度为 64
+            account_list.append(account)
+        return account_list
+
+    def set_genesis_secrets(self):
+        genesis_file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../conflux_sj/sign_secrets.txt")
+        self.conf_parameters["genesis_secrets"] = f"\"{genesis_file_path}\""
+
+    def update_conf(self):
+        config_file_path = self.options.tmpdir + "/node0/conflux.conf"
+        with open(config_file_path, 'r') as file:
+            lines = file.readlines()
+
+        genesis_file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../conflux_sj/sign_secrets.txt")
+        
+        with open(config_file_path, 'w') as file:
+            for line in lines:
+                if line.startswith("genesis_secrets"):
+                    line = f"genesis_secrets='{genesis_file_path}'\n"
+                if line.startswith("mining_type"):
+                    line = f"mining_type='cpu'\nmining_author='10000000000000000000000000000000000000aa'\n"
+                if line.startswith("generate_tx"):
+                    line = f"generate_tx=false"
+                file.write(line)
+        # sync genesis_secrets.txt
+        pscp(self.options.ips_file, 
+             "/home/ubuntu/conflux-rust/tests/conflux_sj/sign_secrets.txt",
+              "/home/ubuntu/conflux-rust/tests/conflux_sj/",
+               3,
+             "copy sign_secrets files to remote nodes ..." )
+
+    def deploy_contract(self):
+        print("http://" + self.nodes[0].ip + ":15025")
+        time.sleep(50)
+        
+        w3 = Web3(Web3.HTTPProvider("http://" + self.nodes[0].ip + ":15025"))
+        
+        # w3.wallet.add_accounts()
+
+        account = Account.from_key(private_key = "0000000000000000000000000000000000000000000000000000000000000001", network_id=10)
+        w3.cfx.default_account = account
+
+        w3.cfx.get_balance(account.address).to("CFX")
+
+        # 读取合约源代码文件
+        with open("sign_contract.sol", "r") as file:
+            source_code = file.read()
+
+        metadata = compile_source(
+                    source_code,
+                    output_values=['abi', 'bin'],
+                    solc_version=install_solc(version="0.8.13")
+                ).popitem()[1]
+        factory = w3.cfx.contract(abi=metadata["abi"], bytecode=metadata["bin"])
+
+        # 部署合约
+        tx_receipt = factory.constructor(init_value=0).transact().executed()
+
+        contract_address = tx_receipt["contractCreated"]
+        assert contract_address is not None
+        # print(f"contract deployed: {contract_address}")
+
+        # 使用address参数初始化合约，这样我们可以调用该对象的链上接口
+        deployed_contract = w3.cfx.contract(address=contract_address, abi=metadata["abi"])
+
+        account_list = []
+        current_path = os.path.abspath(os.path.dirname(__file__))
+        with open(current_path + '/../conflux_sj/sign_secrets.txt', 'r') as file:
+            file.readline()
+            for line in file:
+                private_key = line.strip()
+                account = Account.from_key(private_key = private_key, network_id=10)
+                w3.wallet.add_account(account)
+                account_list.append(account.address)
+        # w3.wallet.add_accounts(account_list)
+
+        print("w3.wallet.accounts:", account_list)
+
+        tx_hash = deployed_contract.functions.multiTransfer().transact(
+            {
+                "value" : 10**18,
+                "from": account_list[0],
+            }
+        )
+
+        return deployed_contract
+
+    def get_transaction(self):
+        transaction = {
+            # 'from': '0x1b981f81568edd843dcb5b407ff0dd2e25618622'.lower(),
+            'to': 'cfxtest:aak7fsws4u4yf38fk870218p1h3gxut3ku00u1k1da',
+            'nonce': 0,
+            'value': 1,
+            'gas': 100000,
+            'gasPrice': 1,
+            'storageLimit': 100,
+            'epochHeight': 100,
+            'chainId': 10
+        }
+        return transaction
+
+    def get_nonce(self, sender, inc=True):
+        if sender not in self.nonce_map:
+            self.nonce_map[sender] = 0
+            # print("self.nonce_map[sender]:", self.nonce_map[sender] )
+        else:
+            self.nonce_map[sender] += 1
+        return self.nonce_map[sender]
+    
+    def sign_task(self, address, obj, key, method_name, secrete_key):
+        print("\nmethod_name:", method_name)
+        # method_name = "test_sign"
+        method = getattr(obj, method_name)
+        self.log.info("TestSignTx" + "." + method_name + "\n\n")
+
+        lambda_val = 0.5
+        
+        for i in range(0,TX_NUM_FOR_ACCOUNT):
+            tx = self.get_transaction()
+            current_nonce = self.get_nonce(address)
+            tx["nonce"] = current_nonce
+
+            print("addresss tx:", tx)
+            # wait_time = random.expovariate(lambda_val)
+            # time.sleep(wait_time)
+            if method_name == "test_sign":
+                print("tx:", tx, " key:", key)
+                method(tx, key)
+            else:
+                method(tx, address, key, secrete_key)
+ 
+
+    def _test_sign(self):
+        module_name = "test_sign"
+        module = __import__("rpc." + module_name, fromlist=True)
+        
+        self.log.info("Stopping remote nodes ...")
+        self.stop_nodes()
+
+        # generate accounts
+        sec_key_list = self.generate_curve_accounts(ACCOUNT_NUM)
+
+        current_path = os.path.abspath(os.path.dirname(__file__))
+        with open(current_path + '/../conflux_sj/sign_secrets.txt', 'w') as file:
+            for sec_key in sec_key_list:
+                file.write(sec_key + '\n')
+
+
+        for i in range(len(self.nodes)):
+            self.log.info("Node[{}]: ip={}, p2p_port={}, rpc_port={}".format(
+                i, self.nodes[i].ip, self.nodes[i].port, self.nodes[i].rpcport))
+        
+        self.log.info("Starting remote nodes ...")
+
+        # kill & delete old nodes and start new
+        # set genesis accounts and initialize_datadir
+        self.set_genesis_secrets()
+
+        self.update_conf()
+        self.setup_network_not_first()
+        self.log.info("All nodes started, waiting to be connected")
+
+        # deployed_contract = self.deploy_contract()
+        
+        # 封装tx
+        current_path = os.path.abspath(os.path.dirname(__file__))
+        with open(current_path + '/../conflux_sj/sign_secrets.txt', 'r') as file:
+            lines = file.readlines()
+
+        account_num = len(lines)
+        # address_list key:address, value:private key
+        address_list = {} 
+        for i in range(0, account_num):
+            line = lines[i].strip()
+            if "quantum" in line:
+                continue
+            line = "0x" + line
+            account = Account.from_key(private_key = line)
+            address_list[account.address] = line
+        # print("address_list:", address_list)
+
+
+        # module_name = "test_sign"
+        # sys.path.append("..") 
+        # module = __import__("rpc." + module_name, fromlist=True)
+        # obj = getattr(module, "TestSignTx") # RpcClient
+
+        module_name = "test_sign"
+        sys.path.append("..") 
+        module = __import__("rpc." + module_name, fromlist=True)
+        
+        obj_type = getattr(module, "TestSignTx") # RpcClient
+        obj_type_other_nodes = getattr(module, "TestPool")
+
+        obj = obj_type(self.nodes[0])
+
+        print("obj:", obj)
+        for key, value in address_list.items():
+            thread = threading.Thread(target=self.sign_task, args=(key, obj, value, "test_sign", ""))
+            thread.start()
+            break
+
+        thread.join()
+ 
+
     def run_test(self):
+        time.sleep(7)
+        
+        blocks = self.nodes[0].generate_empty_blocks(1)
+        self.best_block_hash = blocks[-1] #make_genesis().block_header.hash
+
+        self.log.info("do test sign")
+        self._test_sign()
+
+        time.sleep(60)
+
+        # self.stop_nodes()
+        
+    '''        
         # setup monitor to report the current block count periodically
         cur_block_count = self.nodes[0].getblockcount()
         # The monitor will check the block_count of nodes[0]
@@ -294,7 +553,7 @@ class RemoteSimulate(ConfluxTestFramework):
                 sum(ghost_confirmation_time)/len(ghost_confirmation_time),
                 len(ghost_confirmation_time)
             ))
-
+    '''
 
     def wait_until_nodes_synced(self):
         """
