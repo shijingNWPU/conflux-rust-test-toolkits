@@ -27,7 +27,7 @@ from cfx_account.account import (
 from conflux_web3 import Web3
 from solcx import install_solc, compile_source
 
-ACCOUNT_NUM = 20
+ACCOUNT_NUM = 200
 TX_NUM_FOR_ACCOUNT = 50
 
 CONFIRMATION_THRESHOLD = 0.1**6 * 2**256
@@ -146,7 +146,7 @@ class RemoteSimulate(ConfluxTestFramework):
         self.conf_parameters["persist_tx_index"] = "false"
 
         if self.enable_tx_propagation:
-            self.conf_parameters["generate_tx"] = "true"
+            self.conf_parameters["generate_tx"] = "false"
             self.conf_parameters["generate_tx_period_us"] = str(1000000 * len(self.ips) // self.options.tps)
         else:
             self.conf_parameters["send_tx_period_ms"] = "31536000000" # one year to disable txs propagation
@@ -191,7 +191,13 @@ class RemoteSimulate(ConfluxTestFramework):
         self.start_nodes()
         self.log.info("All nodes started, waiting to be connected")
 
-        connect_sample_nodes(self.nodes, self.log, sample=self.options.connect_peers, timeout=120)
+        
+        connect_sample_nodes(self.nodes, 
+                             self.log, 
+                             sample=self.options.connect_peers, 
+                             latency_min=10, 
+                             latency_max=12, 
+                             timeout=120)
 
         self.wait_until_nodes_synced()
 
@@ -321,10 +327,14 @@ class RemoteSimulate(ConfluxTestFramework):
                 if line.startswith("genesis_secrets"):
                     line = f"genesis_secrets='{genesis_file_path}'\n"
                 if line.startswith("mining_type"):
-                    line = f"mining_type='cpu'\nmining_author='10000000000000000000000000000000000000aa'\n"
-                if line.startswith("generate_tx"):
-                    line = f"generate_tx=false"
+                    line = f"mining_type='cpu'\nmining_author='10000000000000000000000000000000000000aa'\ninitial_difficulty=1\n"
+                # if line.startswith("generate_tx"):
+                #     line = f"generate_tx=false\n"
                 file.write(line)
+
+        with open(config_file_path, 'r') as file:
+            print(file.readlines())
+
         # sync genesis_secrets.txt
         pscp(self.options.ips_file, 
              "/home/ubuntu/conflux-rust/tests/conflux_sj/sign_secrets.txt",
@@ -333,10 +343,10 @@ class RemoteSimulate(ConfluxTestFramework):
              "copy sign_secrets files to remote nodes ..." )
 
     def deploy_contract(self):
-        print("http://" + self.nodes[0].ip + ":15025")
+        print("http://" + self.nodes[0].ip + ":15026")
         time.sleep(50)
         
-        w3 = Web3(Web3.HTTPProvider("http://" + self.nodes[0].ip + ":15025"))
+        w3 = Web3(Web3.HTTPProvider("http://" + self.nodes[0].ip + ":15026"))
         
         # w3.wallet.add_accounts()
 
@@ -410,27 +420,48 @@ class RemoteSimulate(ConfluxTestFramework):
             self.nonce_map[sender] += 1
         return self.nonce_map[sender]
     
-    def sign_task(self, address, obj, key, method_name, secrete_key):
-        print("\nmethod_name:", method_name)
-        # method_name = "test_sign"
-        method = getattr(obj, method_name)
-        self.log.info("TestSignTx" + "." + method_name + "\n\n")
+    def sign_task(self, address, key, method_name, secrete_key):
 
         lambda_val = 0.5
         
         for i in range(0,TX_NUM_FOR_ACCOUNT):
+            module_name = "test_sign"
+            sys.path.append("..") 
+            module = __import__("rpc." + module_name, fromlist=True)
+            
+            obj_type = getattr(module, "TestSignTx") # RpcClient
+            obj_type_other_nodes = getattr(module, "TestPool")
+
+            obj = obj_type(self.nodes[0])
+            print("obj:", obj)
+
+            print("\nmethod_name:", method_name)
+            # method_name = "test_sign"
+            method = getattr(obj, method_name)
+            self.log.info("TestSignTx" + "." + method_name + "\n\n")
+
             tx = self.get_transaction()
             current_nonce = self.get_nonce(address)
             tx["nonce"] = current_nonce
 
             print("addresss tx:", tx)
-            # wait_time = random.expovariate(lambda_val)
-            # time.sleep(wait_time)
+            wait_time = random.expovariate(lambda_val)
+            time.sleep(wait_time)
             if method_name == "test_sign":
                 print("tx:", tx, " key:", key)
                 method(tx, key)
+                # try:
+                #     print("tx:", tx, " key:", key)
+                #     method(tx, key)
+                # except:
+                #     print("Connection refused by the server..")
+                #     print("Let me sleep for 5 seconds")
+                #     print("ZZzzzz...")
+                #     time.sleep(5)
             else:
                 method(tx, address, key, secrete_key)
+            
+            del obj
  
 
     def _test_sign(self):
@@ -488,22 +519,15 @@ class RemoteSimulate(ConfluxTestFramework):
         # module = __import__("rpc." + module_name, fromlist=True)
         # obj = getattr(module, "TestSignTx") # RpcClient
 
-        module_name = "test_sign"
-        sys.path.append("..") 
-        module = __import__("rpc." + module_name, fromlist=True)
-        
-        obj_type = getattr(module, "TestSignTx") # RpcClient
-        obj_type_other_nodes = getattr(module, "TestPool")
 
-        obj = obj_type(self.nodes[0])
 
-        print("obj:", obj)
+
         for key, value in address_list.items():
-            thread = threading.Thread(target=self.sign_task, args=(key, obj, value, "test_sign", ""))
+            thread = threading.Thread(target=self.sign_task, args=(key, value, "test_sign", ""))
             thread.start()
-            break
 
         thread.join()
+        time.sleep(60)
  
 
     def run_test(self):
@@ -515,7 +539,17 @@ class RemoteSimulate(ConfluxTestFramework):
         self.log.info("do test sign")
         self._test_sign()
 
-        time.sleep(60)
+        time.sleep(10)
+
+        # log processs log
+        # info!("[performance testing] receive block hash:{:?} timestamp:{:?}", cmpct.hash(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+        # info!("[performance testing] block hash:{:?}, timestamp:{:?}", hash, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+        # info!("[performance testing] Waiting start. block hash:{:?} timestamp:{:?}", block.hash(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+        # info!("[performance testing] Waiting finished. block hash:{:?} timestamp:{:?}", inner.arena[me].hash, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+        # find /tmp/conflux_test_* -name conflux.log | xargs grep -i "thrott" > throttle.log
+        pssh("./ips", 
+             "find /tmp/conflux_test_* -name conflux.log | xargs grep -i 'performance testing' > block.log")
+        
 
         # self.stop_nodes()
         

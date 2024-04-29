@@ -19,5 +19,5 @@ def change_mining_author(tmp_dir):
                  
     
 if __name__ == "__main__":
-    tmp_dir = sys.argv[0]
+    tmp_dir = sys.argv[1]
     change_mining_author(tmp_dir)

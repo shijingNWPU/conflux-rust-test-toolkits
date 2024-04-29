@@ -30,13 +30,15 @@ do
 	echo "start node $nid: $wd ..."
 	cd $wd
 	
+	# change mining_author
+	python3 /home/ubuntu/conflux-rust/tests/extra-test-toolkits/scripts/change_mining_author.py $wd
+	
 	if [ $flamegraph_enabled = true ]; then
 		nohup cgexec -g net_cls:limit$i flamegraph -o $root_dir/node$nid/conflux.svg ~/conflux --config $root_dir/node$nid/conflux.conf --public-address $ip_addr:$(($p2p_port_start+$nid)) &
 	else
 		nohup cgexec -g net_cls:limit$i ~/conflux --config $root_dir/node$nid/conflux.conf --public-address $ip_addr:$(($p2p_port_start+$nid)) &
 	fi
 	
-	# change mining_author
-	python3 /home/ubuntu/conflux-rust/tests/extra-test-toolkits/scripts/change_mining_author.py $root_dir/node$nid/
+
 
 done
