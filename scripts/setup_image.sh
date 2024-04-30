@@ -56,6 +56,13 @@ cd tests/extra-test-toolkits
 git checkout perf-test
 cd ../..
 
+cd ../
+git clone https://github.com/shijingNWPU/cfx-account.git
+cd cfx-account/
+git checkout perf-test
+pip3 install typing_extensions cfx_address conflux_web3
+cd ../conflux-rust/
+
 export RUSTFLAGS="-g" && cargo build --release #--features "deadlock_detection"
 ./dev-support/dep_pip3.sh
 cd tests/extra-test-toolkits/scripts

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sudo rm -rf /etc/hosts
 export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-west-2}
-
+echo "ip.sh:" $#
 if [[ $# -eq 0 ]]; then
     IP_NAME="PrivateIpAddress"
 elif [[ $# -eq 1 ]] && [[ "$1" == "--public" ]]; then 
