@@ -63,6 +63,8 @@ git checkout perf-test
 pip3 install typing_extensions cfx_address conflux_web3
 cd ../conflux-rust/
 
+pip3 uninstall cfx_account -y
+
 export RUSTFLAGS="-g" && cargo build --release #--features "deadlock_detection"
 ./dev-support/dep_pip3.sh
 cd tests/extra-test-toolkits/scripts
