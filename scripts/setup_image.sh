@@ -57,7 +57,7 @@ git checkout perf-test
 cd ../..
 
 cd ../
-git clone https://github.com/shijingNWPU/cfx-account.git
+git clone --recursive -b perf-test https://github.com/shijingNWPU/cfx-account.git
 cd cfx-account/
 git checkout perf-test
 pip3 install typing_extensions cfx_address conflux_web3
