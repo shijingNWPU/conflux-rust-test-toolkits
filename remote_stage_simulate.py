@@ -8,7 +8,7 @@ import eth_utils
 import rlp
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
-
+import datetime
 import conflux.config
 from conflux.rpc import RpcClient
 from conflux.utils import encode_hex, bytes_to_int, priv_to_addr, parse_as_int, pub_to_addr
@@ -28,8 +28,9 @@ from cfx_account.account import (
 from conflux_web3 import Web3
 from solcx import install_solc, compile_source
 
-ACCOUNT_NUM = 20000
-TX_NUM_FOR_ACCOUNT = 20
+ACCOUNT_NUM = 4
+# TX_NUM_FOR_ACCOUNT = 20
+DURATION_TIME = 100 + ( 10 * (ACCOUNT_NUM - 1))
 
 CONFIRMATION_THRESHOLD = 0.1**6 * 2**256
 
@@ -67,7 +68,7 @@ def kill_remote_conflux(ips_file:str):
 """
 Setup and run conflux nodes on multiple vms with a few nodes on each vm.
 """
-class RemoteSimulate(ConfluxTestFramework):
+class RemoteStageSimulate(ConfluxTestFramework):
     def __init__(self):
         super().__init__()
         self.nonce_map = {} 
@@ -113,8 +114,8 @@ class RemoteSimulate(ConfluxTestFramework):
     )
 
     def add_options(self, parser:ArgumentParser):
-        OptionHelper.add_options(parser, RemoteSimulate.SIMULATE_OPTIONS)
-        OptionHelper.add_options(parser, RemoteSimulate.PASS_TO_CONFLUX_OPTIONS)
+        OptionHelper.add_options(parser, RemoteStageSimulate.SIMULATE_OPTIONS)
+        OptionHelper.add_options(parser, RemoteStageSimulate.PASS_TO_CONFLUX_OPTIONS)
 
     def after_options_parsed(self):
         ConfluxTestFramework.after_options_parsed(self)
@@ -130,7 +131,7 @@ class RemoteSimulate(ConfluxTestFramework):
                 self.ips.append(line)
 
         self.conf_parameters = OptionHelper.conflux_options_to_config(
-            vars(self.options), RemoteSimulate.PASS_TO_CONFLUX_OPTIONS)
+            vars(self.options), RemoteStageSimulate.PASS_TO_CONFLUX_OPTIONS)
 
         # Default Conflux memory consumption
         target_memory = 16
@@ -424,10 +425,18 @@ class RemoteSimulate(ConfluxTestFramework):
     def sign_task(self, address, key, method_name, secrete_key, index):
 
         lambda_val = 0.5
+        start_time = datetime.datetime.now()
+        duration = datetime.timedelta(seconds=DURATION_TIME) 
         
         local_data = threading.local()
 
-        for i in range(0,TX_NUM_FOR_ACCOUNT):
+        # for i in range(0,TX_NUM_FOR_ACCOUNT):
+        i = 0
+        while True:
+            current_time = datetime.datetime.now()
+            if (current_time - start_time) >= duration:
+                break
+
             print("account index:", index, "  tx index:", i)
             module_name = "test_sign"
             sys.path.append("..") 
@@ -444,8 +453,6 @@ class RemoteSimulate(ConfluxTestFramework):
             method = getattr(obj, method_name)
             self.log.info("TestSignTx" + "." + method_name + "\n\n")
 
-            # 将 method 存储在线程局部变量中
-            local_data.method = method
 
             tx = self.get_transaction()
             current_nonce = self.get_nonce(address)
@@ -457,12 +464,13 @@ class RemoteSimulate(ConfluxTestFramework):
             time.sleep(wait_time)
             if method_name == "test_sign":
                 print("tx:", tx, " key:", key)
-                local_data.method(tx, key)
+                method(tx, key)
             else:
-                local_data.method(tx, address, key, secrete_key)
+                method(tx, address, key, secrete_key)
             
             del obj
             del tx
+            i = i + 1
     
     def generate_quantum_accounts(self, account_num):
         account_list = []
@@ -656,14 +664,22 @@ class RemoteSimulate(ConfluxTestFramework):
 
 
         index = 0
+        threads = []
         for key, value in address_list.items():
             index = index + 1
             thread = threading.Thread(target=self.sign_task, args=(key, value, "test_sign", "", index))
-            thread.start()
-            
+            threads.append(thread)
 
-        thread.join()
-        time.sleep(60)
+            thread.start()
+            time.sleep(10)
+
+
+
+        for thread in threads:
+            thread.join()
+   
+
+
  
 
     def run_test(self):
@@ -688,6 +704,8 @@ class RemoteSimulate(ConfluxTestFramework):
         pssh("./ips", 
              "find /tmp/conflux_test_* -name conflux.log | xargs grep -i 'performance testing' > block.log")
         
+        pssh("./ips", 
+             "find /tmp/conflux_test_* -name metrics.log | xargs grep -i 'performance testing' > metrics.log")
 
         # self.stop_nodes()
         
@@ -888,4 +906,4 @@ class SimpleGenerateThread(threading.Thread):
 
 
 if __name__ == "__main__":
-    RemoteSimulate().main()
+    RemoteStageSimulate().main()
