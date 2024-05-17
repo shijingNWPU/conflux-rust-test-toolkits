@@ -17,6 +17,7 @@ from test_framework.util import *
 import time
 from scripts.stat_latency_map_reduce import Statistics
 import platform
+from cfx_address import Base32Address
 from cfx_address.utils import public_key_to_cfx_hex
 
 
@@ -28,8 +29,8 @@ from cfx_account.account import (
 from conflux_web3 import Web3
 from solcx import install_solc, compile_source
 
-ACCOUNT_NUM = 10
-# TX_NUM_FOR_ACCOUNT = 20
+ACCOUNT_NUM = 2
+TX_NUM_FOR_ACCOUNT = 20
 DURATION_TIME = 100 + ( 10 * (ACCOUNT_NUM - 1))
 
 CONFIRMATION_THRESHOLD = 0.1**6 * 2**256
@@ -68,7 +69,7 @@ def kill_remote_conflux(ips_file:str):
 """
 Setup and run conflux nodes on multiple vms with a few nodes on each vm.
 """
-class RemoteStageSimulate(ConfluxTestFramework):
+class RemoteDeploySimulate(ConfluxTestFramework):
     def __init__(self):
         super().__init__()
         self.nonce_map = {} 
@@ -114,8 +115,8 @@ class RemoteStageSimulate(ConfluxTestFramework):
     )
 
     def add_options(self, parser:ArgumentParser):
-        OptionHelper.add_options(parser, RemoteStageSimulate.SIMULATE_OPTIONS)
-        OptionHelper.add_options(parser, RemoteStageSimulate.PASS_TO_CONFLUX_OPTIONS)
+        OptionHelper.add_options(parser, RemoteDeploySimulate.SIMULATE_OPTIONS)
+        OptionHelper.add_options(parser, RemoteDeploySimulate.PASS_TO_CONFLUX_OPTIONS)
 
     def after_options_parsed(self):
         ConfluxTestFramework.after_options_parsed(self)
@@ -131,7 +132,7 @@ class RemoteStageSimulate(ConfluxTestFramework):
                 self.ips.append(line)
 
         self.conf_parameters = OptionHelper.conflux_options_to_config(
-            vars(self.options), RemoteStageSimulate.PASS_TO_CONFLUX_OPTIONS)
+            vars(self.options), RemoteDeploySimulate.PASS_TO_CONFLUX_OPTIONS)
 
         # Default Conflux memory consumption
         target_memory = 16
@@ -310,7 +311,10 @@ class RemoteStageSimulate(ConfluxTestFramework):
     def generate_curve_accounts(self, account_num):
         account_list = []
         for i in range(1, account_num + 1):
-            account = format(i, '064x')  # 将数字转换为十六进制字符串，总长度为 64
+            if i == 1:
+                account = "0000000000000000000000000000000000000000000000000009000000000001"
+            else:
+                account = format(i, '064x')  # 将数字转换为十六进制字符串，总长度为 64
             account_list.append(account)
         return account_list
 
@@ -345,21 +349,74 @@ class RemoteStageSimulate(ConfluxTestFramework):
                3,
              "copy sign_secrets files to remote nodes ..." )
 
+    def call_contract_task(self, deployed_contract, account, private_key, w3):
+        for i in range(0, TX_NUM_FOR_ACCOUNT):
+            recipients = [
+                Base32Address("0x11B5B9b4083DC3C0960Da1C1d89DBbDeeC42Bc50", 10),
+                # "0x14A5Ab64E913e8B3116247A58Ac99c1830f97E4a",
+                # "0x124A68bE86aF40d6e39C63B4F025055c3c39B510",
+                # "0x1C16c75B915068a8C76DF522bA9A659A47d1F245",
+                # "0x13bDB54886d9f03FAC52609Cbf40F60b088D806e"
+            ]
+
+
+            call_result = deployed_contract.functions.multiTransfer(recipients).call(
+                {
+                    "value" : 10**18*2,
+                    "from": account,
+                    "gas": 15000000,
+                    "storageLimit": 1024
+                }
+            )
+
+            print(f"call_result: {call_result}")
+
+            built_transfer_tx = deployed_contract.functions.multiTransfer(recipients).build_transaction(
+                {
+                    "value" : 10**18*2,
+                    "from": account,
+                    "gas": 15000000,
+                    "storageLimit": 1024
+                }
+            )
+
+
+            # sign the transaction
+            start_sign_time = time.perf_counter_ns()
+            signed_transfer_tx = Account.sign_transaction(
+                built_transfer_tx,
+                private_key
+            )
+
+            print("signed_transfer_tx:", signed_transfer_tx)
+            print("【performance】sign:", time.perf_counter_ns() - start_sign_time )
+
+            file = open("file.txt", "a")
+            file.write("\n time:" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "【performance】sign:"+ str(time.perf_counter_ns() - start_sign_time ))
+            file.close()
+
+
+            # send & wait for execution result
+            print(
+                dict(w3.cfx.send_raw_transaction(signed_transfer_tx.rawTransaction).executed())
+            )
+
+
     def deploy_contract(self):
         print("http://" + self.nodes[0].ip + ":15026")
-        time.sleep(50)
+        time.sleep(30)
         
         w3 = Web3(Web3.HTTPProvider("http://" + self.nodes[0].ip + ":15026"))
         
         # w3.wallet.add_accounts()
 
-        account = Account.from_key(private_key = "0000000000000000000000000000000000000000000000000000000000000001", network_id=10)
+        account = Account.from_key(private_key = "0000000000000000000000000000000000000000000000000009000000000001", network_id=10)
         w3.cfx.default_account = account
 
         w3.cfx.get_balance(account.address).to("CFX")
 
         # 读取合约源代码文件
-        with open("sign_contract.sol", "r") as file:
+        with open("../../conflux_sj/contract/sign_contract.sol", "r") as file:
             source_code = file.read()
 
         metadata = compile_source(
@@ -380,24 +437,32 @@ class RemoteStageSimulate(ConfluxTestFramework):
         deployed_contract = w3.cfx.contract(address=contract_address, abi=metadata["abi"])
 
         account_list = []
+        private_key_list = []
         current_path = os.path.abspath(os.path.dirname(__file__))
         with open(current_path + '/../conflux_sj/sign_secrets.txt', 'r') as file:
             file.readline()
             for line in file:
                 private_key = line.strip()
+                private_key_list.append(private_key)
+
                 account = Account.from_key(private_key = private_key, network_id=10)
                 w3.wallet.add_account(account)
                 account_list.append(account.address)
         # w3.wallet.add_accounts(account_list)
 
-        print("w3.wallet.accounts:", account_list)
+        print("w3.wallet.accounts len:", len(account_list))
 
-        tx_hash = deployed_contract.functions.multiTransfer().transact(
-            {
-                "value" : 10**18,
-                "from": account_list[0],
-            }
-        )
+        # 调用合约，one to many
+        threads = []
+        for i in range(0, ACCOUNT_NUM-1):
+            thread = threading.Thread(target=self.call_contract_task, args=(deployed_contract, account_list[i], private_key_list[i], w3))
+            threads.append(thread)
+
+
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
 
         return deployed_contract
 
@@ -605,7 +670,6 @@ class RemoteStageSimulate(ConfluxTestFramework):
         time.sleep(60)
         '''
 
-
     def _test_sign(self):
         module_name = "test_sign"
         module = __import__("rpc." + module_name, fromlist=True)
@@ -679,7 +743,76 @@ class RemoteStageSimulate(ConfluxTestFramework):
         for thread in threads:
             thread.join()
    
+    def _test_deploy(self):
+        module_name = "test_sign"
+        module = __import__("rpc." + module_name, fromlist=True)
+        
+        self.log.info("Stopping remote nodes ...")
+        self.stop_nodes()
 
+        # generate accounts
+        sec_key_list = self.generate_curve_accounts(ACCOUNT_NUM)
+
+        current_path = os.path.abspath(os.path.dirname(__file__))
+        with open(current_path + '/../conflux_sj/sign_secrets.txt', 'w') as file:
+            for sec_key in sec_key_list:
+                file.write(sec_key + '\n')
+
+
+        for i in range(len(self.nodes)):
+            self.log.info("Node[{}]: ip={}, p2p_port={}, rpc_port={}".format(
+                i, self.nodes[i].ip, self.nodes[i].port, self.nodes[i].rpcport))
+        
+        self.log.info("Starting remote nodes ...")
+
+        # kill & delete old nodes and start new
+        # set genesis accounts and initialize_datadir
+        self.set_genesis_secrets()
+
+        self.update_conf()
+        self.setup_network_not_first()
+        self.log.info("All nodes started, waiting to be connected")
+
+        deployed_contract = self.deploy_contract()
+        
+        '''
+        # 封装tx
+        current_path = os.path.abspath(os.path.dirname(__file__))
+        with open(current_path + '/../conflux_sj/sign_secrets.txt', 'r') as file:
+            lines = file.readlines()
+
+        account_num = len(lines)
+        # address_list key:address, value:private key
+        address_list = {} 
+        for i in range(0, account_num):
+            line = lines[i].strip()
+            if "quantum" in line:
+                continue
+            line = "0x" + line
+            account = Account.from_key(private_key = line)
+            # key:address value:key
+            address_list[account.address] = line
+        # print("address_list:", address_list)
+
+
+        # module_name = "test_sign"
+        # sys.path.append("..") 
+        # module = __import__("rpc." + module_name, fromlist=True)
+        # obj = getattr(module, "TestSignTx") # RpcClient
+
+        index = 0
+        threads = []
+        for key, value in address_list.items():
+            index = index + 1
+            thread = threading.Thread(target=self.sign_task, args=(key, value, "test_sign", "", index))
+            threads.append(thread)
+
+            thread.start()
+            time.sleep(10)
+
+        for thread in threads:
+            thread.join()
+        '''
 
  
 
@@ -690,9 +823,9 @@ class RemoteStageSimulate(ConfluxTestFramework):
         self.best_block_hash = blocks[-1] #make_genesis().block_header.hash
 
         self.log.info("do test sign")
-        self._test_sign()
+        # self._test_sign()
         # self._test_quantum_sign()
-        # self._test_deploy()
+        self._test_deploy()
 
         time.sleep(20)
 
@@ -907,4 +1040,4 @@ class SimpleGenerateThread(threading.Thread):
 
 
 if __name__ == "__main__":
-    RemoteStageSimulate().main()
+    RemoteDeploySimulate().main()
