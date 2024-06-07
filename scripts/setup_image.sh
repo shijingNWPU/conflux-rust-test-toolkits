@@ -29,6 +29,7 @@ pip3 install --upgrade pip
 pip3 install prettytable
 pip3 install jsonrpcclient==3.3.6
 pip3 install python-dateutil
+pip3 install openpyxl
 
 sudo apt install -y linux-tools-common
 sudo apt install -y linux-tools-`uname -r`

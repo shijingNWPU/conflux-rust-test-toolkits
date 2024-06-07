@@ -28,12 +28,14 @@ from cfx_account.account import (
 )
 from conflux_web3 import Web3
 from solcx import install_solc, compile_source
+import secrets
 
-ACCOUNT_NUM = 2
-TX_NUM_FOR_ACCOUNT = 20
+ACCOUNT_NUM = 8
+TX_NUM_FOR_ACCOUNT = 50
 DURATION_TIME = 100 + ( 10 * (ACCOUNT_NUM - 1))
 
 CONFIRMATION_THRESHOLD = 0.1**6 * 2**256
+
 
 def execute(cmd, retry, cmd_description):
     print("excute:", cmd)
@@ -349,17 +351,33 @@ class RemoteDeploySimulate(ConfluxTestFramework):
                3,
              "copy sign_secrets files to remote nodes ..." )
 
+    def generate_recipients(self):
+        length = len("000000000000000000000000000000000000000000000000000000000000d001")
+        recipients_list = []
+
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        with open(current_path + "/tmp/tmp.txt", "r") as file:
+            MANY_NUM = int(file.read().strip())
+        
+        for i in range(MANY_NUM):
+            random_bytes = secrets.token_bytes(length // 2) 
+            private_key = random_bytes.hex()
+
+            address = Account.from_key(private_key = private_key, network_id=10).hex_address
+            recipients_list.append(Base32Address(address, 10))
+             
+        
+        print(recipients_list)
+        return recipients_list
+
+
+
+
     def call_contract_task(self, deployed_contract, account, private_key, w3):
         for i in range(0, TX_NUM_FOR_ACCOUNT):
-            recipients = [
-                Base32Address("0x11B5B9b4083DC3C0960Da1C1d89DBbDeeC42Bc50", 10),
-                # "0x14A5Ab64E913e8B3116247A58Ac99c1830f97E4a",
-                # "0x124A68bE86aF40d6e39C63B4F025055c3c39B510",
-                # "0x1C16c75B915068a8C76DF522bA9A659A47d1F245",
-                # "0x13bDB54886d9f03FAC52609Cbf40F60b088D806e"
-            ]
+            recipients = self.generate_recipients()
 
-
+            '''
             call_result = deployed_contract.functions.multiTransfer(recipients).call(
                 {
                     "value" : 10**18*2,
@@ -370,6 +388,7 @@ class RemoteDeploySimulate(ConfluxTestFramework):
             )
 
             print(f"call_result: {call_result}")
+            '''
 
             built_transfer_tx = deployed_contract.functions.multiTransfer(recipients).build_transaction(
                 {
@@ -380,6 +399,7 @@ class RemoteDeploySimulate(ConfluxTestFramework):
                 }
             )
 
+            print(f"built_transfer_tx:{built_transfer_tx}")
 
             # sign the transaction
             start_sign_time = time.perf_counter_ns()

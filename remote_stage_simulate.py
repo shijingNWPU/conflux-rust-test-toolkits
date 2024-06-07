@@ -28,7 +28,7 @@ from cfx_account.account import (
 from conflux_web3 import Web3
 from solcx import install_solc, compile_source
 
-ACCOUNT_NUM = 10
+ACCOUNT_NUM = 6
 # TX_NUM_FOR_ACCOUNT = 20
 DURATION_TIME = 100 + ( 10 * (ACCOUNT_NUM - 1))
 

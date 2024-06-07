@@ -1,0 +1,8 @@
+scripts/logs/logs_tmp/
+scripts/exp.log
+scripts/file.txt
+scripts/instances
+scripts/exp_stat_latency.log
+scripts/core_python3-*
+tmp/output.txt
+scripts/ips

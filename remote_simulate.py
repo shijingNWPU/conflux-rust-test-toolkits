@@ -28,8 +28,8 @@ from cfx_account.account import (
 from conflux_web3 import Web3
 from solcx import install_solc, compile_source
 
-ACCOUNT_NUM = 20000
-TX_NUM_FOR_ACCOUNT = 20
+ACCOUNT_NUM = 200
+TX_NUM_FOR_ACCOUNT = 50
 
 CONFIRMATION_THRESHOLD = 0.1**6 * 2**256
 
@@ -192,13 +192,13 @@ class RemoteSimulate(ConfluxTestFramework):
         self.start_nodes()
         self.log.info("All nodes started, waiting to be connected")
 
-        
-        connect_sample_nodes(self.nodes, 
-                             self.log, 
-                             sample=self.options.connect_peers, 
-                             latency_min=200, 
-                             latency_max=300, 
-                             timeout=120)
+        connect_sample_nodes(self.nodes, self.log, latency_min=99, latency_max=100)
+        # connect_sample_nodes(self.nodes, 
+        #                      self.log, 
+        #                      sample=self.options.connect_peers, 
+        #                      latency_min=200, 
+        #                      latency_max=300, 
+        #                      timeout=120)
 
         self.wait_until_nodes_synced()
 
@@ -454,7 +454,7 @@ class RemoteSimulate(ConfluxTestFramework):
             print("addresss tx:", tx)
             wait_time = random.expovariate(lambda_val)
             print("wait time:", wait_time)
-            time.sleep(wait_time)
+            # time.sleep(wait_time)
             if method_name == "test_sign":
                 print("tx:", tx, " key:", key)
                 local_data.method(tx, key)
@@ -605,6 +605,10 @@ class RemoteSimulate(ConfluxTestFramework):
         self.stop_nodes()
 
         # generate accounts
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        with open(current_path + "/tmp/tmp.txt", "r") as file:
+            ACCOUNT_NUM = int(file.read().strip())
+            
         sec_key_list = self.generate_curve_accounts(ACCOUNT_NUM)
 
         current_path = os.path.abspath(os.path.dirname(__file__))
@@ -656,13 +660,17 @@ class RemoteSimulate(ConfluxTestFramework):
 
 
         index = 0
+        threads = []
         for key, value in address_list.items():
             index = index + 1
             thread = threading.Thread(target=self.sign_task, args=(key, value, "test_sign", "", index))
-            thread.start()
+            threads.append(thread)
             
-
-        thread.join()
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+            
         time.sleep(60)
  
 
@@ -687,6 +695,9 @@ class RemoteSimulate(ConfluxTestFramework):
         # find /tmp/conflux_test_* -name conflux.log | xargs grep -i "thrott" > throttle.log
         pssh("./ips", 
              "find /tmp/conflux_test_* -name conflux.log | xargs grep -i 'performance testing' > block.log")
+
+        pssh("./ips", 
+             "find /tmp/conflux_test_* -name metrics.log | xargs grep -i 'performance testing' > metrics.log")
         
 
         # self.stop_nodes()
